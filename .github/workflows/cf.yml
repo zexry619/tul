@@ -5,10 +5,7 @@ on:
 
   push:
     branches:
-      - master
-    paths-ignore:
-      - 'README.md'
-      - 'LICENSE.md'
+      - main
 
 jobs:
   deploy:
