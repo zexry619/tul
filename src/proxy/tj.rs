@@ -80,17 +80,12 @@ impl Client {
 
 
 #[derive(Debug)]
-pub struct Request<R> {
+pub struct Request {
     port: u16,
     host: String,
-
-    reader: BufReader<R>,
 }
 
-impl<R: AsyncRead + Unpin> Request<R> {
-    pub fn into_inner(self) -> R {
-        self.reader.into_inner()
-    }
+impl Request {
     pub fn hostname(&self) -> &str {
         &self.host
     }
@@ -113,24 +108,24 @@ async fn read_and_verify_crlf<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::
 }
 
 impl Server {
-    pub async fn parse<R: AsyncRead + Unpin>(pw_hash: &Vec<u8>, stream: R) -> std::io::Result<(Request<R>, Vec<u8>)> {
-        let mut reader = BufReader::with_capacity(512, stream);
-
-        let mut password_hash = [0u8; 28];
-        reader.read_exact(&mut password_hash).await?;
-        if password_hash != pw_hash.as_slice() {
+    pub async fn parse<R: AsyncRead + Unpin>(pw_hash: &Vec<u8>, stream: &mut R) -> std::io::Result<Request> {
+    
+        let mut password_hash = [0u8; 56];
+        stream.read_exact(&mut password_hash).await?;
+        if &password_hash != pw_hash.as_slice() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "Invalid password hash",
+                format!("Invalid password hash, expected: {:?}, got: {:?}", 
+                    String::from_utf8_lossy(pw_hash.as_slice()), 
+                    String::from_utf8_lossy(&password_hash)),
             ));
         }
         
-        read_and_verify_crlf(&mut reader).await?;
+        // Read CLRF
+        stream.read_u16().await?;
 
-        // 命令类型
-        let mut command_buf = [0u8; 2];
-        reader.read_exact(&mut command_buf).await?;
-        match u16::from_be_bytes(command_buf) {
+        // Extract command
+        match stream.read_u8().await? {
             1 => {},
             cmd => {
                 return Err(std::io::Error::new(
@@ -139,58 +134,40 @@ impl Server {
                 ));
             }
         };
-        // 端口
-        let mut port_buf = [0u8; 2];
-        reader.read_exact(&mut port_buf).await?;
-        let port = u16::from_be_bytes(port_buf);
 
-        let mut addr_type = [0u8; 1];
-        reader.read_exact(&mut addr_type).await?;
+        // Read address type
+        let atype = stream.read_u8().await?;
 
-        let host = match addr_type[0] {
-            1 => {
-                // IPv4
-                let mut ip_buf = [0u8; 4];
-                reader.read_exact(&mut ip_buf).await?;
-                Ipv4Addr::from(ip_buf).to_string()
-            }
-            4 => {
-                // IPv6
-                let mut ip_buf = [0u8; 16];
-                reader.read_exact(&mut ip_buf).await?;
-                Ipv6Addr::from(ip_buf).to_string()
-            }
+        // Get address size and address object
+        let host = match atype {
+            1 => Ipv4Addr::from(stream.read_u32().await?).to_string(),
+            4 => Ipv6Addr::from(stream.read_u128().await?).to_string(),
             3 => {
-                // 域名
-                let mut domain_len_buf = [0u8; 1];
-                reader.read_exact(&mut domain_len_buf).await?;
-                let domain_len = domain_len_buf[0] as usize;
-                
-                let mut domain_buf = vec![0u8; domain_len];
-                reader.read_exact(&mut domain_buf).await?;
-                
+                // Read domain name size
+                let size = stream.read_u8().await? as usize;
+
+                // Read domain name context
+                let mut domain_buf = vec![0u8; size];
+                stream.read_exact(&mut domain_buf).await?;
                 let domain = String::from_utf8(domain_buf)
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
                 domain
             }
-            _ => {
-                return Err(std::io::Error::new(
+            _ => return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Unknown address type: {}", addr_type[0]),
-                ));
-            }
+                    format!("Unknown address type: {atype}"),
+                )),
         };
 
-        read_and_verify_crlf(&mut reader).await?;
+        // Read port number
+        let port = stream.read_u16().await?;
 
-        let payload = {
-            let available = reader.buffer();
-            available.to_vec()
-        };
-        Ok((Request{
+        // Read CLRF
+        stream.read_u16().await?;
+
+        Ok(Request{
             port,
             host,
-            reader,
-        }, payload))
+        })
     }
 }

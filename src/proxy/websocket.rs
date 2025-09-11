@@ -19,14 +19,18 @@ pin_project! {
 }
 
 impl<'a> WsStream<'a> {
-    pub fn new(ws: &'a WebSocket, events: EventStream<'a>, bufsize: usize) -> Self {
-        Self { 
+    pub fn new(ws: &'a WebSocket, events: EventStream<'a>, bufsize: usize, early_data: Option<Vec<u8>>) -> Self {
+        let mut s  = Self { 
             ws, 
             events ,
-            read_buffer: vec![0; bufsize],
-            write_buffer: vec![0; bufsize],
+            read_buffer: Vec::with_capacity(bufsize),
+            write_buffer: Vec::with_capacity(bufsize),
             is_closed: false,
+        };
+        if let Some(early_data) = early_data {
+            s.read_buffer.extend(early_data);
         }
+        s
     }
 }
 
@@ -55,19 +59,21 @@ impl<'a> AsyncRead for WsStream<'a> {
         if !this.read_buffer.is_empty() {
             let to_copy = std::cmp::min(this.read_buffer.len(), buf.remaining());
             let data = this.read_buffer.drain(..to_copy).collect::<Vec<u8>>();
+            console_log!("buffer message: {:?}",  String::from_utf8_lossy(data.clone().as_slice()));
             buf.put_slice(&data);
             return Poll::Ready(Ok(()));
         }
         if *this.is_closed {
             return Poll::Ready(Ok(())); 
         }
-        match this.events.next().poll_unpin(cx) {
+        match this.events.poll_next_unpin(cx) {
             Poll::Ready(msgoption)=>{
                 match msgoption{
                     Some(Ok(message))=>{
                         match message {
                             worker::WebsocketEvent::Message(msg) => {
                                 let data = msg.bytes().unwrap();
+                                console_log!("websocket message: {:?}",  String::from_utf8_lossy(data.clone().as_slice()));
                                 let to_copy = std::cmp::min( data.len(), buf.remaining());
                                 buf.put_slice(&data[..to_copy]);
                                                         
