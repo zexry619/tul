@@ -1,0 +1,13 @@
+name = "tul"
+main = "build/worker/shim.mjs"
+compatibility_date = "2025-01-10"
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+[env.dev]
+build = { command = "cargo install -q worker-build && worker-build --dev" }
+
+[vars]
+PASSWORD = "password"
+BUFSIZE = "8192"
