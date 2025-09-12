@@ -55,7 +55,6 @@ impl<'a> AsyncRead for WsStream<'a> {
 
         let this = self.project();
 
-        // 如果缓冲区有数据，先从中读取
         if !this.read_buffer.is_empty() {
             let to_copy = std::cmp::min(this.read_buffer.len(), buf.remaining());
             let data = this.read_buffer.drain(..to_copy).collect::<Vec<u8>>();

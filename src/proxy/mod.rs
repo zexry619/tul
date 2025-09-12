@@ -32,7 +32,6 @@ async fn get_expected_hash(cx: &RouteContext<()>) -> Vec<u8> {
 
 }
 
-
 async fn get_bufsize(cx: &RouteContext<()>) -> usize {
     cx.env.var("BUFSIZE")
     .map_or(2048, |x| x.to_string().parse::<usize>().unwrap_or(2048))
@@ -104,7 +103,7 @@ pub async fn tj(req: Request, cx: RouteContext<()>) -> Result<Response> {
             early_data_for_async,
             );
 
-        let result = match tj::Server::parse(expected_hash,&mut wsstream).await {
+        let result = match tj::parse(expected_hash,&mut wsstream).await {
             Ok((hostname, port)) => {
                 match Socket::builder().connect( hostname, port) {
                     Ok(mut upstream) => {
