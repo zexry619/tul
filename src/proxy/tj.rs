@@ -1,6 +1,6 @@
 
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use std::net::{SocketAddr, Ipv4Addr, Ipv6Addr};
 use std::vec::Vec;
 use sha2::Digest;
@@ -78,22 +78,6 @@ impl Client {
 }
 
 
-
-#[derive(Debug)]
-pub struct Request {
-    port: u16,
-    host: String,
-}
-
-impl Request {
-    pub fn hostname(&self) -> &str {
-        &self.host
-    }
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-}
-
 async fn read_and_verify_crlf<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::Result<()> {
     let mut crlf_suffix = [0u8; 2];
     reader.read_exact(&mut crlf_suffix).await?;
@@ -108,14 +92,14 @@ async fn read_and_verify_crlf<R: AsyncRead + Unpin>(reader: &mut R) -> std::io::
 }
 
 impl Server {
-    pub async fn parse<R: AsyncRead + Unpin>(pw_hash: &Vec<u8>, stream: &mut R) -> std::io::Result<Request> {
+    pub async fn parse<R: AsyncRead + Unpin>(pw_hash: &Vec<u8>, stream: &mut R) -> std::io::Result<(String, u16)> {
     
         let mut password_hash = [0u8; 56];
         stream.read_exact(&mut password_hash).await?;
         if &password_hash != pw_hash.as_slice() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("Invalid password hash, expected: {:?}, got: {:?}", 
+                format!("Invalid hash, expected: {:?}, got: {:?}", 
                     String::from_utf8_lossy(pw_hash.as_slice()), 
                     String::from_utf8_lossy(&password_hash)),
             ));
@@ -149,9 +133,8 @@ impl Server {
                 // Read domain name context
                 let mut domain_buf = vec![0u8; size];
                 stream.read_exact(&mut domain_buf).await?;
-                let domain = String::from_utf8(domain_buf)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-                domain
+                String::from_utf8(domain_buf)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
             }
             _ => return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -165,9 +148,6 @@ impl Server {
         // Read CLRF
         stream.read_u16().await?;
 
-        Ok(Request{
-            port,
-            host,
-        })
+        Ok((host,  port))
     }
 }

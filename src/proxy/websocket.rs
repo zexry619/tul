@@ -3,7 +3,7 @@
 use pin_project_lite::pin_project;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use worker::*;
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -59,7 +59,6 @@ impl<'a> AsyncRead for WsStream<'a> {
         if !this.read_buffer.is_empty() {
             let to_copy = std::cmp::min(this.read_buffer.len(), buf.remaining());
             let data = this.read_buffer.drain(..to_copy).collect::<Vec<u8>>();
-            console_log!("buffer message: {:?}",  String::from_utf8_lossy(data.clone().as_slice()));
             buf.put_slice(&data);
             return Poll::Ready(Ok(()));
         }
@@ -73,7 +72,6 @@ impl<'a> AsyncRead for WsStream<'a> {
                         match message {
                             worker::WebsocketEvent::Message(msg) => {
                                 let data = msg.bytes().unwrap();
-                                console_log!("websocket message: {:?}",  String::from_utf8_lossy(data.clone().as_slice()));
                                 let to_copy = std::cmp::min( data.len(), buf.remaining());
                                 buf.put_slice(&data[..to_copy]);
                                                         

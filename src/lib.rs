@@ -14,7 +14,7 @@ async fn fetch(
     console_error_panic_hook::set_once();
     
     Router::new()
-        .on_async("/:path", handler)
+        .on_async("/*path", handler)
         .run(req, env)
         .await 
 }

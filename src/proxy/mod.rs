@@ -2,15 +2,22 @@
 
 pub mod tj;
 pub mod websocket;
+pub mod api;
 
-
+use regex::Regex;
+use http::Uri;
 use base64::{engine::general_purpose, Engine as _};
 use worker::*;
 use sha2::{Sha224, Digest};
-use tokio::{io::AsyncWriteExt, sync::OnceCell};
+use tokio::{sync::OnceCell};
 
 static EXPECTED_HASH: OnceCell<Vec<u8>> = OnceCell::const_new();
 static BUFSIZE: OnceCell<usize> = OnceCell::const_new();
+static APIREGEX: OnceCell<Regex> = OnceCell::const_new();
+
+async fn get_regex() -> Regex {
+    regex::Regex::new(r"^/(?P<domain>[^/]+)(?P<path>/[^?]*)?(?P<query>\?.*)?$").unwrap()
+}
 
 async fn get_expected_hash(cx: &RouteContext<()>) -> Vec<u8> {
     let pw = cx.env
@@ -28,14 +35,32 @@ async fn get_expected_hash(cx: &RouteContext<()>) -> Vec<u8> {
 
 async fn get_bufsize(cx: &RouteContext<()>) -> usize {
     cx.env.var("BUFSIZE")
-    .map_or(4096, |x| x.to_string().parse::<usize>().unwrap_or(4096))
+    .map_or(2048, |x| x.to_string().parse::<usize>().unwrap_or(2048))
 }
 
 pub async fn handler(req: Request, cx: RouteContext<()>) -> Result<Response> {
-    console_log!("Request url: {:?}", req.url().unwrap());
+    console_debug!("Request url: {:?}", req.url().unwrap());
     match req.path().as_str() {
         "/tj" => tj(req, cx).await,
-        _ => Response::error( "Not Found",404),
+        _ => {
+            let reg = APIREGEX.get_or_init(|| async {
+                get_regex().await
+            }).await;
+
+            if let Some(captures) = reg.captures(req.path().as_str()) {
+                let domain = captures.name("domain").map_or("", |x| x.as_str());
+                let path = captures.name("path").map_or("", |x| x.as_str());
+                let query = captures.name("query").map_or("", |x| x.as_str());
+
+                if !domain.contains('.') {
+                    return Response::error("Not Found", 404);
+                }
+                if let Ok(url) = format!("https://{}{}{}", domain, path, query).parse::<Uri>() {                   
+                    return api::handler(req,  url).await;
+                }
+            } 
+            return Response::error( "Not Found",404);
+        }
     }   
 }
 
@@ -78,23 +103,21 @@ pub async fn tj(req: Request, cx: RouteContext<()>) -> Result<Response> {
             buf_size,
             early_data_for_async,
             );
-        
-        console_log!("WebSocket connection established");
 
         let result = match tj::Server::parse(expected_hash,&mut wsstream).await {
-            Ok(req) => {
-                match Socket::builder().connect( req.hostname(), req.port()) {
+            Ok((hostname, port)) => {
+                match Socket::builder().connect( hostname, port) {
                     Ok(mut upstream) => {
                         match tokio::io::copy_bidirectional(wsstream.as_mut(),&mut upstream).await {
-                            Ok(_) => {console_log!("bidirectional success"); Ok(())},
+                            Ok(_) => Ok(()),
                             Err(e) => {
-                                console_log!("copy failed: {}", e);
+                                console_error!("forward failed: {}", e);
                                 Err(e)
                             }
                         }
                     }
                     Err(e) => {
-                        console_log!("connect failed: {}", e);
+                        console_error!("connect failed: {}", e);
                         Err(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
                             "connect failed:"),
@@ -103,7 +126,7 @@ pub async fn tj(req: Request, cx: RouteContext<()>) -> Result<Response> {
                 }                       
             },
             Err(e) => {
-                console_log!("parse request failed: {}", e);
+                console_error!("parse request failed: {}", e);
                 Err(e)
             }
         };

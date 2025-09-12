@@ -10,4 +10,4 @@ deploy: ## deploy to cf workers
 
 .PHONY: dev
 dev: ## run the project locally
-	@ npx wrangler dev
+	@ npx wrangler dev -c .wrangler.dev.toml
